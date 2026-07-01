@@ -1,0 +1,6 @@
+{
+  "name": "Scratch-Off Image Reveal",
+  "description": "Upload any image, overlay a customizable scratch-off mask, and swipe your finger or pointer to scratch it away and reveal the secret underneath.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
