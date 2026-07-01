@@ -3,7 +3,7 @@ import { Check, Copy, Image as ImageIcon, Move, RotateCcw, Share2, Sparkles, Upl
 import ScratchCanvas from './components/ScratchCanvas';
 import { MaskConfig, ScratchAreaPoint, ScratchAreaShape, ShortsPlacement } from './types';
 
-type WizardStep = 'upload' | 'place' | 'share' | 'scratch';
+type WizardStep = 'upload' | 'place' | 'share' | 'scratch' | 'manage' | 'inactive';
 
 const DEFAULT_SHORTS_PLACEMENT: ShortsPlacement = {
   x: 0.32,
@@ -32,6 +32,8 @@ const DEFAULT_MASK: MaskConfig = {
   textColor: '#334155'
 };
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 export default function App() {
   const [step, setStep] = useState<WizardStep>('upload');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -45,6 +47,10 @@ export default function App() {
   const [isFullyRevealed, setIsFullyRevealed] = useState<boolean>(false);
   const [resetKey, setResetKey] = useState<number>(0);
   const [shareUrl, setShareUrl] = useState<string>('');
+  const [manageUrl, setManageUrl] = useState<string>('');
+  const [revealId, setRevealId] = useState<string>('');
+  const [manageToken, setManageToken] = useState<string>('');
+  const [isRevealActive, setIsRevealActive] = useState<boolean>(true);
   const [status, setStatus] = useState<string>('');
   const [isUploadDragging, setIsUploadDragging] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,10 +71,10 @@ export default function App() {
     return JSON.parse(decodeURIComponent(atob(value)));
   };
 
-  const createShareUrl = (nextImageUrl = imageUrl) => {
-    if (!nextImageUrl) return '';
+  const createRevealPayload = (nextImageUrl = imageUrl) => {
+    if (!nextImageUrl) return null;
 
-    const payload = {
+    return {
       version: 2,
       imageUrl: nextImageUrl,
       brushSize,
@@ -78,7 +84,26 @@ export default function App() {
       shortsPlacement,
       maskConfig
     };
+  };
+
+  const createEmbeddedShareUrl = (nextImageUrl = imageUrl) => {
+    const payload = createRevealPayload(nextImageUrl);
+    if (!payload) return '';
+
     return `${window.location.origin}${window.location.pathname}#share=${encodeSharePayload(payload)}`;
+  };
+
+  const applyRevealPayload = (payload: any) => {
+    if (!payload?.imageUrl && !payload?.customImageUrl) {
+      throw new Error('Missing image');
+    }
+
+    setImageUrl(payload.imageUrl || payload.customImageUrl);
+    setShortsPlacement(payload.shortsPlacement || DEFAULT_SHORTS_PLACEMENT);
+    setCustomScratchPath(Array.isArray(payload.customScratchPath) ? payload.customScratchPath : DEFAULT_SHORTS_POINTS);
+    setScratchAreaShape('placed-shorts');
+    setIsPlacingShorts(false);
+    resetScratch();
   };
 
   const compressImageFile = (file: File) => {
@@ -135,6 +160,9 @@ export default function App() {
       setScratchAreaShape('placed-shorts');
       setIsPlacingShorts(true);
       setShareUrl('');
+      setManageUrl('');
+      setRevealId('');
+      setManageToken('');
       setStatus('');
       resetScratch();
       setStep('place');
@@ -153,28 +181,47 @@ export default function App() {
   };
 
   const handleCreateShareLink = async () => {
-    const url = createShareUrl();
-    if (!url) {
+    const payload = createRevealPayload();
+    if (!payload) {
       setStatus('Upload an image first.');
       return;
     }
 
-    if (url.length > 180000) {
-      setStatus('This image is too large for a share URL. Try a smaller crop or lower-resolution photo.');
-      return;
-    }
-
-    setShareUrl(url);
     try {
-      await navigator.clipboard.writeText(url);
-      setStatus('Share link copied.');
-    } catch (_) {
-      setStatus('Share link ready.');
+      setStatus('Saving reveal...');
+      const response = await fetch(`${API_BASE_URL}/api/reveals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload })
+      });
+
+      if (!response.ok) {
+        throw new Error('Database API unavailable.');
+      }
+
+      const data = await response.json();
+      setRevealId(data.id);
+      setManageToken(data.manageToken);
+      setShareUrl(data.shareUrl);
+      setManageUrl(data.manageUrl);
+      setIsRevealActive(true);
+      await navigator.clipboard.writeText(data.shareUrl);
+      setStatus('Database share link copied. Keep the manage link private so you can switch it on or off.');
+    } catch (error) {
+      const embeddedUrl = createEmbeddedShareUrl();
+      if (embeddedUrl.length > 180000) {
+        setStatus('Database API is unavailable, and this image is too large for a fallback URL.');
+        return;
+      }
+
+      setShareUrl(embeddedUrl);
+      setManageUrl('');
+      setStatus('Database API is unavailable. Created a fallback link, but fallback links cannot be switched off.');
     }
   };
 
   const handleNativeShare = async () => {
-    const url = shareUrl || createShareUrl();
+    const url = shareUrl || createEmbeddedShareUrl();
     if (!url) return;
 
     try {
@@ -190,24 +237,92 @@ export default function App() {
     }
   };
 
+  const handleToggleReveal = async (active: boolean) => {
+    if (!revealId || !manageToken) return;
+
+    try {
+      setStatus(active ? 'Switching reveal on...' : 'Switching reveal off...');
+      const response = await fetch(`${API_BASE_URL}/api/reveals/${encodeURIComponent(revealId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: manageToken, active })
+      });
+
+      if (!response.ok) {
+        throw new Error('Could not update reveal.');
+      }
+
+      setIsRevealActive(active);
+      setStatus(active ? 'Reveal is switched on.' : 'Reveal is switched off.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not update reveal.');
+    }
+  };
+
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const revealParam = params.get('r');
+    const manageParam = params.get('manage');
+    const tokenParam = params.get('token');
+
+    if (manageParam && tokenParam) {
+      fetch(`${API_BASE_URL}/api/reveals/${encodeURIComponent(manageParam)}/manage?token=${encodeURIComponent(tokenParam)}`)
+        .then(async (response) => {
+          if (!response.ok) throw new Error('Could not load reveal management.');
+          return response.json();
+        })
+        .then((data) => {
+          applyRevealPayload(data.payload);
+          setRevealId(manageParam);
+          setManageToken(tokenParam);
+          setIsRevealActive(Boolean(data.active));
+          setShareUrl(`${window.location.origin}${window.location.pathname}?r=${encodeURIComponent(manageParam)}`);
+          setManageUrl(window.location.href);
+          setStep('manage');
+          setStatus('');
+        })
+        .catch((error) => {
+          setStatus(error instanceof Error ? error.message : 'Could not load reveal management.');
+          setStep('upload');
+        });
+      return;
+    }
+
+    if (revealParam) {
+      fetch(`${API_BASE_URL}/api/reveals/${encodeURIComponent(revealParam)}`)
+        .then(async (response) => {
+          if (response.status === 410) {
+            return { inactive: true };
+          }
+          if (!response.ok) throw new Error('Could not load this scratch reveal.');
+          return response.json();
+        })
+        .then((data) => {
+          if (data.inactive) {
+            setStep('inactive');
+            setStatus('This scratch reveal is currently switched off.');
+            return;
+          }
+          applyRevealPayload(data.payload);
+          setRevealId(revealParam);
+          setStep('scratch');
+          setStatus('');
+        })
+        .catch((error) => {
+          setStatus(error instanceof Error ? error.message : 'Could not load this scratch reveal.');
+          setStep('upload');
+        });
+      return;
+    }
+
     const hash = window.location.hash;
     if (!hash.startsWith('#share=')) return;
 
     try {
       const payload = decodeSharePayload(hash.replace('#share=', ''));
-      if (!payload.imageUrl && !payload.customImageUrl) {
-        throw new Error('Missing image');
-      }
-
-      setImageUrl(payload.imageUrl || payload.customImageUrl);
-      setShortsPlacement(payload.shortsPlacement || DEFAULT_SHORTS_PLACEMENT);
-      setCustomScratchPath(Array.isArray(payload.customScratchPath) ? payload.customScratchPath : DEFAULT_SHORTS_POINTS);
-      setScratchAreaShape('placed-shorts');
-      setIsPlacingShorts(false);
+      applyRevealPayload(payload);
       setStep('scratch');
       setStatus('');
-      resetScratch();
     } catch (_) {
       setStatus('Could not load this shared scratch reveal.');
       setStep('upload');
@@ -221,7 +336,7 @@ export default function App() {
   }, [percentageRevealed, isFullyRevealed]);
 
   const currentStepIndex = step === 'upload' ? 0 : step === 'place' ? 1 : 2;
-  const isCustomerScratchView = step === 'scratch';
+  const isCustomerScratchView = step === 'scratch' || step === 'inactive';
 
   return (
     <div className="min-h-screen bg-neutral-100 font-sans text-neutral-900">
@@ -234,7 +349,7 @@ export default function App() {
             <div>
               <h1 className="font-display text-lg font-bold tracking-tight">Scratch Shorts Reveal</h1>
               <p className="text-[11px] font-medium text-neutral-500">
-                {isCustomerScratchView ? 'Scratch to reveal the image' : 'Create a shareable scratch reveal'}
+                {step === 'inactive' ? 'This reveal is currently switched off' : isCustomerScratchView ? 'Scratch to reveal the image' : 'Create a shareable scratch reveal'}
               </p>
             </div>
           </div>
@@ -246,6 +361,9 @@ export default function App() {
                 setImageUrl(null);
                 setCustomScratchPath(DEFAULT_SHORTS_POINTS);
                 setShareUrl('');
+                setManageUrl('');
+                setRevealId('');
+                setManageToken('');
                 setStatus('');
                 resetScratch();
               }}
@@ -298,6 +416,14 @@ export default function App() {
               isFullyRevealed={isFullyRevealed}
               soundEnabled={!isPlacingShorts}
             />
+          ) : step === 'inactive' ? (
+            <div className="flex aspect-[10/7] items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50">
+              <div className="max-w-sm text-center">
+                <Sparkles className="mx-auto h-10 w-10 text-neutral-300" />
+                <p className="mt-2 text-sm font-semibold text-neutral-700">This scratch reveal is switched off</p>
+                <p className="mt-1 text-xs text-neutral-500">Ask the sender to switch it back on from their private manage link.</p>
+              </div>
+            </div>
           ) : (
             <div className="flex aspect-[10/7] items-center justify-center rounded-2xl border border-dashed border-neutral-300 bg-neutral-50">
               <div className="text-center">
@@ -417,11 +543,24 @@ export default function App() {
                   Open Share Sheet
                 </button>
                 {shareUrl && (
-                  <textarea
-                    readOnly
-                    value={shareUrl}
-                    className="mt-3 h-24 w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-[11px] text-neutral-600 outline-hidden"
-                  />
+                  <div className="mt-3">
+                    <label className="text-[11px] font-bold uppercase text-neutral-500">Customer URL</label>
+                    <textarea
+                      readOnly
+                      value={shareUrl}
+                      className="mt-1 h-20 w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-[11px] text-neutral-600 outline-hidden"
+                    />
+                  </div>
+                )}
+                {manageUrl && (
+                  <div className="mt-3">
+                    <label className="text-[11px] font-bold uppercase text-neutral-500">Private manage URL</label>
+                    <textarea
+                      readOnly
+                      value={manageUrl}
+                      className="mt-1 h-20 w-full resize-none rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 outline-hidden"
+                    />
+                  </div>
                 )}
                 <button
                   type="button"
@@ -437,6 +576,70 @@ export default function App() {
               </div>
             )}
 
+            {step === 'manage' && (
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wide">Manage Reveal</h2>
+                <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+                  Use this private page to switch the customer scratch page on or off after sharing.
+                </p>
+                <div className={`mt-4 rounded-xl border px-3 py-2 text-xs font-bold ${
+                  isRevealActive
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-red-200 bg-red-50 text-red-700'
+                }`}>
+                  {isRevealActive ? 'Currently ON' : 'Currently OFF'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleToggleReveal(false)}
+                  disabled={!isRevealActive}
+                  className="mt-4 flex w-full items-center justify-center rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white shadow-md hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                >
+                  Switch Off Customer Page
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleReveal(true)}
+                  disabled={isRevealActive}
+                  className="mt-2 flex w-full items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:border-neutral-300 disabled:cursor-not-allowed disabled:text-neutral-300"
+                >
+                  Switch On Customer Page
+                </button>
+                {shareUrl && (
+                  <div className="mt-4">
+                    <label className="text-[11px] font-bold uppercase text-neutral-500">Customer URL</label>
+                    <textarea
+                      readOnly
+                      value={shareUrl}
+                      className="mt-1 h-20 w-full resize-none rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-[11px] text-neutral-600 outline-hidden"
+                    />
+                  </div>
+                )}
+                {manageUrl && (
+                  <div className="mt-3">
+                    <label className="text-[11px] font-bold uppercase text-neutral-500">Private manage URL</label>
+                    <textarea
+                      readOnly
+                      value={manageUrl}
+                      className="mt-1 h-20 w-full resize-none rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 outline-hidden"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {status && (
+              <p className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium text-neutral-600">
+                {status}
+              </p>
+            )}
+          </aside>
+        ) : step === 'inactive' ? (
+          <aside className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-xs">
+            <h2 className="text-sm font-bold uppercase tracking-wide">Reveal Off</h2>
+            <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+              This customer scratch page has been disabled by the sender.
+            </p>
             {status && (
               <p className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium text-neutral-600">
                 {status}
