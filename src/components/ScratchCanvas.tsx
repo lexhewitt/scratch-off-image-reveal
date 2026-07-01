@@ -59,13 +59,15 @@ export default function ScratchCanvas({
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const dragPlacementRef = useRef<{
-    mode: 'move' | 'point';
+    mode: 'move' | 'point' | 'rotate';
     pointIndex?: number;
     pointerId: number;
     startX: number;
     startY: number;
     startPlacement: ShortsPlacement;
     startPoints: ScratchAreaPoint[];
+    center: ScratchAreaPoint;
+    startPointerAngle: number;
   } | null>(null);
 
   const getDefaultShortsPath = (width: number, height: number) => {
@@ -141,6 +143,89 @@ export default function ScratchCanvas({
     return path;
   };
 
+  const getEditableShortsPath = (points: ScratchAreaPoint[], width: number, height: number) => {
+    if (points.length < 11) {
+      return getPathFromPoints(points, width, height);
+    }
+
+    const scaled = points.slice(0, 11).map((point) => ({
+      x: point.x * width,
+      y: point.y * height
+    }));
+    const [
+      waistLeft,
+      waistRight,
+      rightHip,
+      rightOuterHem,
+      rightInnerHem,
+      rightInseam,
+      crotch,
+      leftInseam,
+      leftInnerHem,
+      leftOuterHem,
+      leftHip
+    ] = scaled;
+
+    const path = new Path2D();
+    path.moveTo(waistLeft.x, waistLeft.y);
+    path.lineTo(waistRight.x, waistRight.y);
+    path.quadraticCurveTo(rightHip.x, rightHip.y, rightOuterHem.x, rightOuterHem.y);
+    path.quadraticCurveTo(
+      (rightOuterHem.x + rightInnerHem.x) / 2,
+      Math.max(rightOuterHem.y, rightInnerHem.y) + height * 0.03,
+      rightInnerHem.x,
+      rightInnerHem.y
+    );
+    path.quadraticCurveTo(rightInseam.x, rightInseam.y, crotch.x, crotch.y);
+    path.quadraticCurveTo(leftInseam.x, leftInseam.y, leftInnerHem.x, leftInnerHem.y);
+    path.quadraticCurveTo(
+      (leftInnerHem.x + leftOuterHem.x) / 2,
+      Math.max(leftInnerHem.y, leftOuterHem.y) + height * 0.03,
+      leftOuterHem.x,
+      leftOuterHem.y
+    );
+    path.quadraticCurveTo(leftHip.x, leftHip.y, waistLeft.x, waistLeft.y);
+    path.closePath();
+
+    return path;
+  };
+
+  const getEditableShortsSvgPath = (points: ScratchAreaPoint[]) => {
+    if (points.length < 11) {
+      return `M ${points.map((point) => `${point.x * 100} ${point.y * 100}`).join(' L ')} Z`;
+    }
+
+    const p = points.slice(0, 11).map((point) => ({
+      x: point.x * 100,
+      y: point.y * 100
+    }));
+    const [
+      waistLeft,
+      waistRight,
+      rightHip,
+      rightOuterHem,
+      rightInnerHem,
+      rightInseam,
+      crotch,
+      leftInseam,
+      leftInnerHem,
+      leftOuterHem,
+      leftHip
+    ] = p;
+
+    return [
+      `M ${waistLeft.x} ${waistLeft.y}`,
+      `L ${waistRight.x} ${waistRight.y}`,
+      `Q ${rightHip.x} ${rightHip.y} ${rightOuterHem.x} ${rightOuterHem.y}`,
+      `Q ${(rightOuterHem.x + rightInnerHem.x) / 2} ${Math.max(rightOuterHem.y, rightInnerHem.y) + 3} ${rightInnerHem.x} ${rightInnerHem.y}`,
+      `Q ${rightInseam.x} ${rightInseam.y} ${crotch.x} ${crotch.y}`,
+      `Q ${leftInseam.x} ${leftInseam.y} ${leftInnerHem.x} ${leftInnerHem.y}`,
+      `Q ${(leftInnerHem.x + leftOuterHem.x) / 2} ${Math.max(leftInnerHem.y, leftOuterHem.y) + 3} ${leftOuterHem.x} ${leftOuterHem.y}`,
+      `Q ${leftHip.x} ${leftHip.y} ${waistLeft.x} ${waistLeft.y}`,
+      'Z'
+    ].join(' ');
+  };
+
   const getScratchAreaPath = (width: number, height: number) => {
     const path = new Path2D();
 
@@ -148,7 +233,7 @@ export default function ScratchCanvas({
       return getDefaultShortsPath(width, height);
     } else if (scratchAreaShape === 'placed-shorts') {
       return customScratchPath.length >= 3
-        ? getPathFromPoints(customScratchPath, width, height)
+        ? getEditableShortsPath(customScratchPath, width, height)
         : getShortsPathInBox(shortsPlacement, width, height);
     } else if (scratchAreaShape === 'drawn-shorts') {
       return customScratchPath.length >= 3
@@ -645,22 +730,62 @@ export default function ScratchCanvas({
     }));
   };
 
+  const getPointsCenter = (points: ScratchAreaPoint[]) => {
+    if (points.length === 0) return { x: 0.5, y: 0.5 };
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+
+    return {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2
+    };
+  };
+
+  const getPointerAngle = (clientX: number, clientY: number, center: ScratchAreaPoint) => {
+    const container = containerRef.current;
+    if (!container) return 0;
+    const rect = container.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+    return Math.atan2(y - center.y, x - center.x);
+  };
+
+  const rotatePoints = (points: ScratchAreaPoint[], center: ScratchAreaPoint, angle: number) => {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    return points.map((point) => {
+      const dx = point.x - center.x;
+      const dy = point.y - center.y;
+      return clampPoint({
+        x: center.x + dx * cos - dy * sin,
+        y: center.y + dx * sin + dy * cos
+      });
+    });
+  };
+
   const handlePlacementPointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
-    mode: 'move' | 'point',
+    mode: 'move' | 'point' | 'rotate',
     pointIndex?: number
   ) => {
     if (!isPlacingShorts) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
+    const center = getPointsCenter(customScratchPath);
     dragPlacementRef.current = {
       mode,
+      pointIndex,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       startPlacement: shortsPlacement,
-      startPoints: customScratchPath
+      startPoints: customScratchPath,
+      center,
+      startPointerAngle: getPointerAngle(e.clientX, e.clientY, center)
     };
   };
 
@@ -682,6 +807,16 @@ export default function ScratchCanvas({
           : point
       ));
       onCustomScratchPathChange(nextPoints);
+      return;
+    }
+
+    if (dragState.mode === 'rotate') {
+      const nextAngle = getPointerAngle(e.clientX, e.clientY, dragState.center);
+      onCustomScratchPathChange(rotatePoints(
+        dragState.startPoints,
+        dragState.center,
+        nextAngle - dragState.startPointerAngle
+      ));
       return;
     }
 
@@ -837,6 +972,12 @@ export default function ScratchCanvas({
     }
   };
 
+  const placedShortsCenter = getPointsCenter(customScratchPath);
+  const placedShortsTop = customScratchPath.length > 0
+    ? Math.min(...customScratchPath.map((point) => point.y))
+    : 0.2;
+  const rotateHandleY = Math.max(0.04, placedShortsTop - 0.08);
+
   return (
     <div 
       ref={containerRef} 
@@ -907,27 +1048,41 @@ export default function ScratchCanvas({
         <div
           id="placed-shorts-stencil"
           className="absolute inset-0 z-20 cursor-move touch-none select-none"
-          style={{
-            clipPath: customScratchPath.length >= 3
-              ? `polygon(${customScratchPath.map((point) => `${point.x * 100}% ${point.y * 100}%`).join(', ')})`
-              : undefined
-          }}
           onPointerDown={(e) => handlePlacementPointerDown(e, 'move')}
           onPointerMove={handlePlacementPointerMove}
           onPointerUp={handlePlacementPointerUp}
           onPointerCancel={handlePlacementPointerUp}
         >
-          <div
-            className="h-full w-full bg-amber-300/30 shadow-[0_0_0_9999px_rgba(15,23,42,0.08)]"
-          />
+          {customScratchPath.length >= 3 && (
+            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <path
+                d={getEditableShortsSvgPath(customScratchPath)}
+                vectorEffect="non-scaling-stroke"
+                fill="rgba(245, 158, 11, 0.24)"
+                stroke="rgba(245, 158, 11, 0.9)"
+                strokeDasharray="7 5"
+                strokeWidth="2"
+              />
+            </svg>
+          )}
         </div>
       )}
 
       {scratchAreaShape === 'placed-shorts' && isPlacingShorts && customScratchPath.length >= 3 && (
         <div className="pointer-events-none absolute inset-0 z-30 touch-none select-none">
           <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <polygon
-              points={customScratchPath.map((point) => `${point.x * 100},${point.y * 100}`).join(' ')}
+            <line
+              x1={placedShortsCenter.x * 100}
+              y1={placedShortsTop * 100}
+              x2={placedShortsCenter.x * 100}
+              y2={rotateHandleY * 100}
+              vectorEffect="non-scaling-stroke"
+              stroke="#f59e0b"
+              strokeDasharray="4 4"
+              strokeWidth="2"
+            />
+            <path
+              d={getEditableShortsSvgPath(customScratchPath)}
               vectorEffect="non-scaling-stroke"
               fill="transparent"
               stroke="#f59e0b"
@@ -935,6 +1090,20 @@ export default function ScratchCanvas({
               strokeWidth="2"
             />
           </svg>
+          <div
+            className="pointer-events-auto absolute flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-amber-500 text-[10px] font-bold text-white shadow-md active:cursor-grabbing"
+            style={{
+              left: `${placedShortsCenter.x * 100}%`,
+              top: `${rotateHandleY * 100}%`
+            }}
+            onPointerDown={(e) => handlePlacementPointerDown(e, 'rotate')}
+            onPointerMove={handlePlacementPointerMove}
+            onPointerUp={handlePlacementPointerUp}
+            onPointerCancel={handlePlacementPointerUp}
+            title="Rotate shorts"
+          >
+            R
+          </div>
           {customScratchPath.map((point, index) => (
             <div
               key={`${index}-${point.x}-${point.y}`}

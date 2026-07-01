@@ -13,17 +13,17 @@ const DEFAULT_SHORTS_PLACEMENT: ShortsPlacement = {
 };
 
 const DEFAULT_SHORTS_POINTS: ScratchAreaPoint[] = [
-  { x: 0.26, y: 0.26 },
-  { x: 0.74, y: 0.26 },
-  { x: 0.78, y: 0.43 },
-  { x: 0.70, y: 0.84 },
-  { x: 0.58, y: 0.84 },
-  { x: 0.56, y: 0.62 },
-  { x: 0.5, y: 0.56 },
-  { x: 0.44, y: 0.62 },
-  { x: 0.42, y: 0.84 },
-  { x: 0.30, y: 0.84 },
-  { x: 0.22, y: 0.43 }
+  { x: 0.28, y: 0.18 },
+  { x: 0.72, y: 0.18 },
+  { x: 0.76, y: 0.31 },
+  { x: 0.79, y: 0.78 },
+  { x: 0.61, y: 0.80 },
+  { x: 0.56, y: 0.52 },
+  { x: 0.50, y: 0.49 },
+  { x: 0.44, y: 0.52 },
+  { x: 0.39, y: 0.80 },
+  { x: 0.21, y: 0.78 },
+  { x: 0.24, y: 0.31 }
 ];
 
 const DEFAULT_MASK: MaskConfig = {
@@ -267,7 +267,7 @@ export default function App() {
               </span>
               <p className="mt-2 text-xs text-neutral-500">
                 {isPlacingShorts
-                  ? 'Drag the shape over the legs and pull any point to refine it.'
+                  ? 'Drag the shape, pull any point, or use the R handle to rotate.'
                   : 'The foil only covers the placed shorts area.'}
               </p>
             </div>
@@ -369,7 +369,7 @@ export default function App() {
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide">Drag & Stretch Shorts</h2>
                 <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-                  Move the stencil over the legs. Pull any black point to shape the waist, sides, hems, and crotch.
+                  Move the stencil over the legs. Pull black points to shape the waist, sides, hems, and crotch. Drag the R handle to rotate.
                 </p>
                 <button
                   type="button"
