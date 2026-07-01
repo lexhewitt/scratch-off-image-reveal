@@ -12,6 +12,20 @@ const DEFAULT_SHORTS_PLACEMENT: ShortsPlacement = {
   height: 0.46
 };
 
+const DEFAULT_SHORTS_POINTS: ScratchAreaPoint[] = [
+  { x: 0.26, y: 0.26 },
+  { x: 0.74, y: 0.26 },
+  { x: 0.78, y: 0.43 },
+  { x: 0.70, y: 0.84 },
+  { x: 0.58, y: 0.84 },
+  { x: 0.56, y: 0.62 },
+  { x: 0.5, y: 0.56 },
+  { x: 0.44, y: 0.62 },
+  { x: 0.42, y: 0.84 },
+  { x: 0.30, y: 0.84 },
+  { x: 0.22, y: 0.43 }
+];
+
 const DEFAULT_MASK: MaskConfig = {
   type: 'silver',
   text: 'SCRATCH TO REVEAL',
@@ -24,7 +38,7 @@ export default function App() {
   const [brushSize] = useState<number>(34);
   const [pictureZoom] = useState<number>(100);
   const [scratchAreaShape, setScratchAreaShape] = useState<ScratchAreaShape>('placed-shorts');
-  const [customScratchPath, setCustomScratchPath] = useState<ScratchAreaPoint[]>([]);
+  const [customScratchPath, setCustomScratchPath] = useState<ScratchAreaPoint[]>(DEFAULT_SHORTS_POINTS);
   const [shortsPlacement, setShortsPlacement] = useState<ShortsPlacement>(DEFAULT_SHORTS_PLACEMENT);
   const [isPlacingShorts, setIsPlacingShorts] = useState<boolean>(false);
   const [percentageRevealed, setPercentageRevealed] = useState<number>(0);
@@ -60,6 +74,7 @@ export default function App() {
       brushSize,
       pictureZoom,
       scratchAreaShape: 'placed-shorts',
+      customScratchPath,
       shortsPlacement,
       maskConfig
     };
@@ -116,6 +131,7 @@ export default function App() {
       const compressed = await compressImageFile(file);
       setImageUrl(compressed);
       setShortsPlacement(DEFAULT_SHORTS_PLACEMENT);
+      setCustomScratchPath(DEFAULT_SHORTS_POINTS);
       setScratchAreaShape('placed-shorts');
       setIsPlacingShorts(true);
       setShareUrl('');
@@ -186,6 +202,7 @@ export default function App() {
 
       setImageUrl(payload.imageUrl || payload.customImageUrl);
       setShortsPlacement(payload.shortsPlacement || DEFAULT_SHORTS_PLACEMENT);
+      setCustomScratchPath(Array.isArray(payload.customScratchPath) ? payload.customScratchPath : DEFAULT_SHORTS_POINTS);
       setScratchAreaShape('placed-shorts');
       setIsPlacingShorts(false);
       setStep('scratch');
@@ -227,6 +244,7 @@ export default function App() {
               onClick={() => {
                 setStep('upload');
                 setImageUrl(null);
+                setCustomScratchPath(DEFAULT_SHORTS_POINTS);
                 setShareUrl('');
                 setStatus('');
                 resetScratch();
@@ -249,7 +267,7 @@ export default function App() {
               </span>
               <p className="mt-2 text-xs text-neutral-500">
                 {isPlacingShorts
-                  ? 'Drag the shorts over the legs and stretch from the corners.'
+                  ? 'Drag the shape over the legs and pull any point to refine it.'
                   : 'The foil only covers the placed shorts area.'}
               </p>
             </div>
@@ -351,7 +369,7 @@ export default function App() {
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide">Drag & Stretch Shorts</h2>
                 <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-                  Move the stencil over the legs. Use the corner handles to stretch it until it covers the shorts area.
+                  Move the stencil over the legs. Pull any black point to shape the waist, sides, hems, and crotch.
                 </p>
                 <button
                   type="button"
@@ -365,6 +383,7 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     setShortsPlacement(DEFAULT_SHORTS_PLACEMENT);
+                    setCustomScratchPath(DEFAULT_SHORTS_POINTS);
                     setIsPlacingShorts(true);
                   }}
                   className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:border-neutral-300"

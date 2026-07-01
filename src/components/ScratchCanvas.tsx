@@ -59,11 +59,13 @@ export default function ScratchCanvas({
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
   const dragPlacementRef = useRef<{
-    mode: 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se';
+    mode: 'move' | 'point';
+    pointIndex?: number;
     pointerId: number;
     startX: number;
     startY: number;
     startPlacement: ShortsPlacement;
+    startPoints: ScratchAreaPoint[];
   } | null>(null);
 
   const getDefaultShortsPath = (width: number, height: number) => {
@@ -145,7 +147,9 @@ export default function ScratchCanvas({
     if (scratchAreaShape === 'shorts') {
       return getDefaultShortsPath(width, height);
     } else if (scratchAreaShape === 'placed-shorts') {
-      return getShortsPathInBox(shortsPlacement, width, height);
+      return customScratchPath.length >= 3
+        ? getPathFromPoints(customScratchPath, width, height)
+        : getShortsPathInBox(shortsPlacement, width, height);
     } else if (scratchAreaShape === 'drawn-shorts') {
       return customScratchPath.length >= 3
         ? getPathFromPoints(customScratchPath, width, height)
@@ -387,7 +391,9 @@ export default function ScratchCanvas({
 
       ctx.fillStyle = maskConfig.textColor || '#ffffff';
       const labelY = scratchAreaShape === 'placed-shorts'
-        ? (shortsPlacement.y + shortsPlacement.height * 0.35) * height
+        ? (customScratchPath.length >= 3
+            ? Math.min(...customScratchPath.map((point) => point.y)) * height + 44
+            : (shortsPlacement.y + shortsPlacement.height * 0.35) * height)
         : scratchAreaShape === 'shorts'
           ? height * 0.38
           : height / 2;
@@ -619,9 +625,30 @@ export default function ScratchCanvas({
     };
   };
 
+  const clampPoint = (point: ScratchAreaPoint): ScratchAreaPoint => ({
+    x: Math.min(1, Math.max(0, point.x)),
+    y: Math.min(1, Math.max(0, point.y))
+  });
+
+  const movePoints = (points: ScratchAreaPoint[], deltaX: number, deltaY: number) => {
+    if (points.length === 0) return points;
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    const safeDeltaX = Math.min(1 - maxX, Math.max(-minX, deltaX));
+    const safeDeltaY = Math.min(1 - maxY, Math.max(-minY, deltaY));
+
+    return points.map((point) => ({
+      x: point.x + safeDeltaX,
+      y: point.y + safeDeltaY
+    }));
+  };
+
   const handlePlacementPointerDown = (
     e: React.PointerEvent<HTMLDivElement>,
-    mode: 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se'
+    mode: 'move' | 'point',
+    pointIndex?: number
   ) => {
     if (!isPlacingShorts) return;
     e.preventDefault();
@@ -632,7 +659,8 @@ export default function ScratchCanvas({
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      startPlacement: shortsPlacement
+      startPlacement: shortsPlacement,
+      startPoints: customScratchPath
     };
   };
 
@@ -646,30 +674,27 @@ export default function ScratchCanvas({
     const rect = container.getBoundingClientRect();
     const deltaX = (e.clientX - dragState.startX) / rect.width;
     const deltaY = (e.clientY - dragState.startY) / rect.height;
-    const start = dragState.startPlacement;
-    let next = { ...start };
 
-    if (dragState.mode === 'move') {
-      next.x = start.x + deltaX;
-      next.y = start.y + deltaY;
-    } else {
-      if (dragState.mode.includes('w')) {
-        next.x = start.x + deltaX;
-        next.width = start.width - deltaX;
-      }
-      if (dragState.mode.includes('e')) {
-        next.width = start.width + deltaX;
-      }
-      if (dragState.mode.includes('n')) {
-        next.y = start.y + deltaY;
-        next.height = start.height - deltaY;
-      }
-      if (dragState.mode.includes('s')) {
-        next.height = start.height + deltaY;
-      }
+    if (dragState.mode === 'point' && typeof dragState.pointIndex === 'number') {
+      const nextPoints = dragState.startPoints.map((point, index) => (
+        index === dragState.pointIndex
+          ? clampPoint({ x: point.x + deltaX, y: point.y + deltaY })
+          : point
+      ));
+      onCustomScratchPathChange(nextPoints);
+      return;
     }
 
-    onShortsPlacementChange(clampPlacement(next));
+    if (dragState.startPoints.length >= 3) {
+      onCustomScratchPathChange(movePoints(dragState.startPoints, deltaX, deltaY));
+      return;
+    }
+
+    onShortsPlacementChange(clampPlacement({
+      ...dragState.startPlacement,
+      x: dragState.startPlacement.x + deltaX,
+      y: dragState.startPlacement.y + deltaY
+    }));
   };
 
   const handlePlacementPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -881,12 +906,11 @@ export default function ScratchCanvas({
       {scratchAreaShape === 'placed-shorts' && isPlacingShorts && (
         <div
           id="placed-shorts-stencil"
-          className="absolute z-20 cursor-move touch-none select-none"
+          className="absolute inset-0 z-20 cursor-move touch-none select-none"
           style={{
-            left: `${shortsPlacement.x * 100}%`,
-            top: `${shortsPlacement.y * 100}%`,
-            width: `${shortsPlacement.width * 100}%`,
-            height: `${shortsPlacement.height * 100}%`
+            clipPath: customScratchPath.length >= 3
+              ? `polygon(${customScratchPath.map((point) => `${point.x * 100}% ${point.y * 100}%`).join(', ')})`
+              : undefined
           }}
           onPointerDown={(e) => handlePlacementPointerDown(e, 'move')}
           onPointerMove={handlePlacementPointerMove}
@@ -894,25 +918,36 @@ export default function ScratchCanvas({
           onPointerCancel={handlePlacementPointerUp}
         >
           <div
-            className="h-full w-full border-2 border-dashed border-amber-400 bg-amber-300/20 shadow-[0_0_0_9999px_rgba(15,23,42,0.08)]"
-            style={{
-              clipPath: 'polygon(4% 4%, 96% 4%, 82% 96%, 60% 96%, 58% 62%, 50% 54%, 42% 62%, 40% 96%, 18% 96%)',
-              borderRadius: '18% 18% 14% 14%'
-            }}
+            className="h-full w-full bg-amber-300/30 shadow-[0_0_0_9999px_rgba(15,23,42,0.08)]"
           />
-          {[
-            ['resize-nw', 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize'],
-            ['resize-ne', 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize'],
-            ['resize-sw', 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize'],
-            ['resize-se', 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize']
-          ].map(([mode, className]) => (
+        </div>
+      )}
+
+      {scratchAreaShape === 'placed-shorts' && isPlacingShorts && customScratchPath.length >= 3 && (
+        <div className="pointer-events-none absolute inset-0 z-30 touch-none select-none">
+          <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <polygon
+              points={customScratchPath.map((point) => `${point.x * 100},${point.y * 100}`).join(' ')}
+              vectorEffect="non-scaling-stroke"
+              fill="transparent"
+              stroke="#f59e0b"
+              strokeDasharray="6 5"
+              strokeWidth="2"
+            />
+          </svg>
+          {customScratchPath.map((point, index) => (
             <div
-              key={mode}
-              className={`absolute h-5 w-5 rounded-full border-2 border-white bg-neutral-950 shadow-md ${className}`}
-              onPointerDown={(e) => handlePlacementPointerDown(e, mode as 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se')}
+              key={`${index}-${point.x}-${point.y}`}
+              className="pointer-events-auto absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-white bg-neutral-950 shadow-md active:cursor-grabbing"
+              style={{
+                left: `${point.x * 100}%`,
+                top: `${point.y * 100}%`
+              }}
+              onPointerDown={(e) => handlePlacementPointerDown(e, 'point', index)}
               onPointerMove={handlePlacementPointerMove}
               onPointerUp={handlePlacementPointerUp}
               onPointerCancel={handlePlacementPointerUp}
+              title={`Move shorts point ${index + 1}`}
             />
           ))}
         </div>
