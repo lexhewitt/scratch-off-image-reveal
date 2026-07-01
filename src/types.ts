@@ -7,11 +7,18 @@ export interface PresetImage {
 }
 
 export type MaskStyleType = 'silver' | 'gold' | 'charcoal' | 'cardboard' | 'color';
-export type ScratchAreaShape = 'rectangle' | 'shorts' | 'drawn-shorts';
+export type ScratchAreaShape = 'rectangle' | 'shorts' | 'drawn-shorts' | 'placed-shorts';
 
 export interface ScratchAreaPoint {
   x: number;
   y: number;
+}
+
+export interface ShortsPlacement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface MaskConfig {
@@ -28,6 +35,7 @@ export interface ScratchState {
   brushSize: number;
   scratchAreaShape: ScratchAreaShape;
   customScratchPath: ScratchAreaPoint[];
+  shortsPlacement: ShortsPlacement;
   isFullyRevealed: boolean;
   maskConfig: MaskConfig;
   underlayType: 'image' | 'secret-text';

@@ -1,6 +1,6 @@
 import React from 'react';
 import { MaskConfig, MaskStyleType, ScratchAreaPoint, ScratchAreaShape } from '../types';
-import { Palette, Type, Gift, FileText, Smile, Square, Scissors, Pencil, Trash2 } from 'lucide-react';
+import { Palette, Type, Gift, FileText, Smile, Square, Scissors, Pencil, Trash2, Move } from 'lucide-react';
 
 interface MaskCustomizerProps {
   maskConfig: MaskConfig;
@@ -15,6 +15,8 @@ interface MaskCustomizerProps {
   onCustomScratchPathChange: (path: ScratchAreaPoint[]) => void;
   isDrawingScratchArea: boolean;
   onDrawingScratchAreaChange: (isDrawing: boolean) => void;
+  isPlacingShorts: boolean;
+  onPlacingShortsChange: (isPlacing: boolean) => void;
 }
 
 export default function MaskCustomizer({
@@ -29,7 +31,9 @@ export default function MaskCustomizer({
   customScratchPath,
   onCustomScratchPathChange,
   isDrawingScratchArea,
-  onDrawingScratchAreaChange
+  onDrawingScratchAreaChange,
+  isPlacingShorts,
+  onPlacingShortsChange
 }: MaskCustomizerProps) {
   
   const handleTypeSelect = (type: MaskStyleType) => {
@@ -214,7 +218,7 @@ export default function MaskCustomizer({
         </h3>
         <p className="text-xs text-neutral-500 mt-1">Choose or draw the silhouette where foil can be scratched away.</p>
 
-        <div className="mt-3 grid grid-cols-3 gap-2 bg-neutral-100 p-1 rounded-xl">
+        <div className="mt-3 grid grid-cols-2 gap-2 bg-neutral-100 p-1 rounded-xl sm:grid-cols-4">
           <button
             type="button"
             id="scratch-area-rectangle"
@@ -263,7 +267,47 @@ export default function MaskCustomizer({
             <Pencil className="w-3.5 h-3.5" />
             Draw
           </button>
+          <button
+            type="button"
+            id="scratch-area-placed-shorts"
+            onClick={() => {
+              onScratchAreaShapeChange('placed-shorts');
+              onDrawingScratchAreaChange(false);
+              onPlacingShortsChange(true);
+            }}
+            className={`flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold transition-all ${
+              scratchAreaShape === 'placed-shorts'
+                ? 'bg-white text-neutral-900 shadow-xs'
+                : 'text-neutral-500 hover:text-neutral-800'
+            }`}
+          >
+            <Move className="w-3.5 h-3.5" />
+            Place
+          </button>
         </div>
+
+        {scratchAreaShape === 'placed-shorts' && (
+          <div className="mt-3 flex flex-col gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                id="place-shorts-toggle"
+                onClick={() => onPlacingShortsChange(!isPlacingShorts)}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-all ${
+                  isPlacingShorts
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300'
+                }`}
+              >
+                <Move className="w-3.5 h-3.5" />
+                {isPlacingShorts ? 'Apply Shorts Area' : 'Move or Stretch'}
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed text-neutral-500">
+              Drag the shorts stencil over the legs, stretch it with the corner handles, then apply it before sharing.
+            </p>
+          </div>
+        )}
 
         {scratchAreaShape === 'drawn-shorts' && (
           <div className="mt-3 flex flex-col gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3">

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { MaskConfig, ScratchAreaPoint, ScratchAreaShape } from '../types';
+import { MaskConfig, ScratchAreaPoint, ScratchAreaShape, ShortsPlacement } from '../types';
 
 interface ScratchCanvasProps {
   key?: React.Key;
@@ -11,8 +11,11 @@ interface ScratchCanvasProps {
   scratchAreaShape: ScratchAreaShape;
   customScratchPath: ScratchAreaPoint[];
   onCustomScratchPathChange: (path: ScratchAreaPoint[]) => void;
+  shortsPlacement: ShortsPlacement;
+  onShortsPlacementChange: (placement: ShortsPlacement) => void;
   isDrawingScratchArea: boolean;
   onDrawingScratchAreaChange: (isDrawing: boolean) => void;
+  isPlacingShorts: boolean;
   maskConfig: MaskConfig;
   onPercentageChange: (percent: number) => void;
   isFullyRevealed: boolean;
@@ -29,8 +32,11 @@ export default function ScratchCanvas({
   scratchAreaShape,
   customScratchPath,
   onCustomScratchPathChange,
+  shortsPlacement,
+  onShortsPlacementChange,
   isDrawingScratchArea,
   onDrawingScratchAreaChange,
+  isPlacingShorts,
   maskConfig,
   onPercentageChange,
   isFullyRevealed,
@@ -52,6 +58,13 @@ export default function ScratchCanvas({
   const draftScratchPathRef = useRef<ScratchAreaPoint[]>([]);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [imgLoaded, setImgLoaded] = useState(false);
+  const dragPlacementRef = useRef<{
+    mode: 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se';
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPlacement: ShortsPlacement;
+  } | null>(null);
 
   const getDefaultShortsPath = (width: number, height: number) => {
     const path = new Path2D();
@@ -81,6 +94,38 @@ export default function ScratchCanvas({
     return path;
   };
 
+  const getShortsPathInBox = (placement: ShortsPlacement, width: number, height: number) => {
+    const path = new Path2D();
+    const boxX = placement.x * width;
+    const boxY = placement.y * height;
+    const boxW = placement.width * width;
+    const boxH = placement.height * height;
+    const left = boxX + boxW * 0.04;
+    const right = boxX + boxW * 0.96;
+    const top = boxY + boxH * 0.04;
+    const bottom = boxY + boxH * 0.96;
+    const waistBottom = boxY + boxH * 0.22;
+    const crotchY = boxY + boxH * 0.62;
+    const innerLeft = boxX + boxW * 0.42;
+    const innerRight = boxX + boxW * 0.58;
+
+    path.moveTo(left, top);
+    path.quadraticCurveTo(boxX + boxW * 0.5, boxY, right, top);
+    path.lineTo(boxX + boxW * 0.82, bottom);
+    path.quadraticCurveTo(boxX + boxW * 0.68, boxY + boxH, boxX + boxW * 0.6, bottom);
+    path.lineTo(innerRight, crotchY);
+    path.quadraticCurveTo(boxX + boxW * 0.5, boxY + boxH * 0.54, innerLeft, crotchY);
+    path.lineTo(boxX + boxW * 0.4, bottom);
+    path.quadraticCurveTo(boxX + boxW * 0.32, boxY + boxH, boxX + boxW * 0.18, bottom);
+    path.lineTo(left, top);
+    path.closePath();
+
+    path.moveTo(left + boxW * 0.03, waistBottom);
+    path.lineTo(right - boxW * 0.03, waistBottom);
+
+    return path;
+  };
+
   const getPathFromPoints = (points: ScratchAreaPoint[], width: number, height: number) => {
     const path = new Path2D();
     if (points.length === 0) return path;
@@ -99,6 +144,8 @@ export default function ScratchCanvas({
 
     if (scratchAreaShape === 'shorts') {
       return getDefaultShortsPath(width, height);
+    } else if (scratchAreaShape === 'placed-shorts') {
+      return getShortsPathInBox(shortsPlacement, width, height);
     } else if (scratchAreaShape === 'drawn-shorts') {
       return customScratchPath.length >= 3
         ? getPathFromPoints(customScratchPath, width, height)
@@ -339,7 +386,12 @@ export default function ScratchCanvas({
       ctx.shadowOffsetY = 2;
 
       ctx.fillStyle = maskConfig.textColor || '#ffffff';
-      ctx.fillText(maskConfig.text, width / 2, scratchAreaShape === 'shorts' ? height * 0.38 : height / 2);
+      const labelY = scratchAreaShape === 'placed-shorts'
+        ? (shortsPlacement.y + shortsPlacement.height * 0.35) * height
+        : scratchAreaShape === 'shorts'
+          ? height * 0.38
+          : height / 2;
+      ctx.fillText(maskConfig.text, width / 2, labelY);
 
       // Reset shadow
       ctx.shadowColor = 'transparent';
@@ -394,7 +446,10 @@ export default function ScratchCanvas({
     if (canvas) {
       canvas.width = dimensions.width;
       canvas.height = dimensions.height;
-      if (isDrawingScratchArea) {
+      if (isPlacingShorts) {
+        const ctx = canvas.getContext('2d');
+        ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      } else if (isDrawingScratchArea) {
         drawScratchAreaPreview(canvas, draftScratchPath.length > 0 ? draftScratchPath : customScratchPath);
       } else {
         drawMask(canvas);
@@ -402,7 +457,7 @@ export default function ScratchCanvas({
       // Reset reveal progress
       onPercentageChange(0);
     }
-  }, [dimensions, maskConfig, scratchAreaShape, customScratchPath, isDrawingScratchArea]);
+  }, [dimensions, maskConfig, scratchAreaShape, customScratchPath, isDrawingScratchArea, isPlacingShorts, shortsPlacement]);
 
   // Clean up Web Audio node when unmounting
   useEffect(() => {
@@ -548,6 +603,81 @@ export default function ScratchCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
     drawScratchAreaPreview(canvas, points);
+  };
+
+  const clampPlacement = (placement: ShortsPlacement): ShortsPlacement => {
+    const minWidth = 0.12;
+    const minHeight = 0.18;
+    const width = Math.min(0.95, Math.max(minWidth, placement.width));
+    const height = Math.min(0.95, Math.max(minHeight, placement.height));
+
+    return {
+      x: Math.min(1 - width, Math.max(0, placement.x)),
+      y: Math.min(1 - height, Math.max(0, placement.y)),
+      width,
+      height
+    };
+  };
+
+  const handlePlacementPointerDown = (
+    e: React.PointerEvent<HTMLDivElement>,
+    mode: 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se'
+  ) => {
+    if (!isPlacingShorts) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragPlacementRef.current = {
+      mode,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startPlacement: shortsPlacement
+    };
+  };
+
+  const handlePlacementPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragPlacementRef.current;
+    const container = containerRef.current;
+    if (!dragState || !container || e.pointerId !== dragState.pointerId) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = container.getBoundingClientRect();
+    const deltaX = (e.clientX - dragState.startX) / rect.width;
+    const deltaY = (e.clientY - dragState.startY) / rect.height;
+    const start = dragState.startPlacement;
+    let next = { ...start };
+
+    if (dragState.mode === 'move') {
+      next.x = start.x + deltaX;
+      next.y = start.y + deltaY;
+    } else {
+      if (dragState.mode.includes('w')) {
+        next.x = start.x + deltaX;
+        next.width = start.width - deltaX;
+      }
+      if (dragState.mode.includes('e')) {
+        next.width = start.width + deltaX;
+      }
+      if (dragState.mode.includes('n')) {
+        next.y = start.y + deltaY;
+        next.height = start.height - deltaY;
+      }
+      if (dragState.mode.includes('s')) {
+        next.height = start.height + deltaY;
+      }
+    }
+
+    onShortsPlacementChange(clampPlacement(next));
+  };
+
+  const handlePlacementPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragPlacementRef.current?.pointerId === e.pointerId) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragPlacementRef.current = null;
+    }
   };
 
   const drawPoint = (x: number, y: number) => {
@@ -748,6 +878,46 @@ export default function ScratchCanvas({
         )}
       </div>
 
+      {scratchAreaShape === 'placed-shorts' && isPlacingShorts && (
+        <div
+          id="placed-shorts-stencil"
+          className="absolute z-20 cursor-move touch-none select-none"
+          style={{
+            left: `${shortsPlacement.x * 100}%`,
+            top: `${shortsPlacement.y * 100}%`,
+            width: `${shortsPlacement.width * 100}%`,
+            height: `${shortsPlacement.height * 100}%`
+          }}
+          onPointerDown={(e) => handlePlacementPointerDown(e, 'move')}
+          onPointerMove={handlePlacementPointerMove}
+          onPointerUp={handlePlacementPointerUp}
+          onPointerCancel={handlePlacementPointerUp}
+        >
+          <div
+            className="h-full w-full border-2 border-dashed border-amber-400 bg-amber-300/20 shadow-[0_0_0_9999px_rgba(15,23,42,0.08)]"
+            style={{
+              clipPath: 'polygon(4% 4%, 96% 4%, 82% 96%, 60% 96%, 58% 62%, 50% 54%, 42% 62%, 40% 96%, 18% 96%)',
+              borderRadius: '18% 18% 14% 14%'
+            }}
+          />
+          {[
+            ['resize-nw', 'left-0 top-0 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize'],
+            ['resize-ne', 'right-0 top-0 translate-x-1/2 -translate-y-1/2 cursor-nesw-resize'],
+            ['resize-sw', 'bottom-0 left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize'],
+            ['resize-se', 'bottom-0 right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize']
+          ].map(([mode, className]) => (
+            <div
+              key={mode}
+              className={`absolute h-5 w-5 rounded-full border-2 border-white bg-neutral-950 shadow-md ${className}`}
+              onPointerDown={(e) => handlePlacementPointerDown(e, mode as 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se')}
+              onPointerMove={handlePlacementPointerMove}
+              onPointerUp={handlePlacementPointerUp}
+              onPointerCancel={handlePlacementPointerUp}
+            />
+          ))}
+        </div>
+      )}
+
       {/* 2. Top Cover Scratching Canvas */}
       <canvas
         ref={canvasRef}
@@ -757,7 +927,7 @@ export default function ScratchCanvas({
           width: '100%',
           height: '100%',
           opacity: isFullyRevealed ? 0 : 1,
-          pointerEvents: isFullyRevealed ? 'none' : 'auto'
+          pointerEvents: isFullyRevealed || isPlacingShorts ? 'none' : 'auto'
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PRESETS, MaskConfig, PresetImage, ScratchAreaPoint, ScratchAreaShape } from './types';
+import { PRESETS, MaskConfig, PresetImage, ScratchAreaPoint, ScratchAreaShape, ShortsPlacement } from './types';
 import ScratchCanvas from './components/ScratchCanvas';
 import PresetSelector from './components/PresetSelector';
 import MaskCustomizer from './components/MaskCustomizer';
@@ -17,12 +17,15 @@ export default function App() {
   const [pictureZoom, setPictureZoom] = useState<number>(100);
   const [scratchAreaShape, setScratchAreaShape] = useState<ScratchAreaShape>('rectangle');
   const [customScratchPath, setCustomScratchPath] = useState<ScratchAreaPoint[]>([]);
+  const [shortsPlacement, setShortsPlacement] = useState<ShortsPlacement>({ x: 0.32, y: 0.28, width: 0.36, height: 0.46 });
   const [isDrawingScratchArea, setIsDrawingScratchArea] = useState<boolean>(false);
+  const [isPlacingShorts, setIsPlacingShorts] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [percentageRevealed, setPercentageRevealed] = useState<number>(0);
   const [isFullyRevealed, setIsFullyRevealed] = useState<boolean>(false);
   const [showCelebration, setShowCelebration] = useState<boolean>(false);
   const [resetKey, setResetKey] = useState<number>(0); // Incremented to force-remount/reset the ScratchCanvas cleanly
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
 
   const [maskConfig, setMaskConfig] = useState<MaskConfig>({
     type: 'silver',
@@ -43,6 +46,15 @@ export default function App() {
     return preset ? preset.url : '';
   };
 
+  const encodeSharePayload = (payload: unknown) => {
+    const json = JSON.stringify(payload);
+    return btoa(encodeURIComponent(json));
+  };
+
+  const decodeSharePayload = (value: string) => {
+    return JSON.parse(decodeURIComponent(atob(value)));
+  };
+
   // Select a preset image
   const handleSelectPreset = (preset: PresetImage) => {
     setCustomImageUrl(null);
@@ -58,6 +70,46 @@ export default function App() {
     handleReset();
   };
 
+  const handleCreateShareLink = async () => {
+    const payload = {
+      version: 1,
+      underlayType,
+      selectedPresetId,
+      customImageUrl,
+      secretText,
+      brushSize,
+      pictureZoom,
+      scratchAreaShape,
+      customScratchPath,
+      shortsPlacement,
+      maskConfig
+    };
+    const encoded = encodeSharePayload(payload);
+    const shareUrl = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
+
+    if (shareUrl.length > 180000) {
+      setShareStatus('This image is too large for a share URL. Try a smaller crop or lower-resolution photo.');
+      return;
+    }
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Scratch reveal', url: shareUrl });
+        setShareStatus('Share sheet opened.');
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareStatus('Share link copied.');
+      }
+    } catch (error) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareStatus('Share link copied.');
+      } catch (_) {
+        setShareStatus('Could not copy automatically. Use the browser address bar after sharing is added.');
+      }
+    }
+  };
+
   // Reset the scratch card with a fresh coat of latex
   const handleReset = () => {
     setIsFullyRevealed(false);
@@ -65,6 +117,34 @@ export default function App() {
     setPercentageRevealed(0);
     setResetKey((prev) => prev + 1);
   };
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#share=')) return;
+
+    try {
+      const payload = decodeSharePayload(hash.replace('#share=', ''));
+      if (payload.selectedPresetId) setSelectedPresetId(payload.selectedPresetId);
+      if (payload.customImageUrl) {
+        setCustomImageUrl(payload.customImageUrl);
+        setSelectedPresetId(null);
+      }
+      if (payload.underlayType) setUnderlayType(payload.underlayType);
+      if (typeof payload.secretText === 'string') setSecretText(payload.secretText);
+      if (typeof payload.brushSize === 'number') setBrushSize(payload.brushSize);
+      if (typeof payload.pictureZoom === 'number') setPictureZoom(payload.pictureZoom);
+      if (payload.scratchAreaShape) setScratchAreaShape(payload.scratchAreaShape);
+      if (Array.isArray(payload.customScratchPath)) setCustomScratchPath(payload.customScratchPath);
+      if (payload.shortsPlacement) setShortsPlacement(payload.shortsPlacement);
+      if (payload.maskConfig) setMaskConfig(payload.maskConfig);
+      setIsDrawingScratchArea(false);
+      setIsPlacingShorts(false);
+      handleReset();
+      setShareStatus('Shared scratch card loaded.');
+    } catch (error) {
+      setShareStatus('Could not load this shared scratch card.');
+    }
+  }, []);
 
   // Smoothly trigger the Reveal All action
   const handleRevealAll = () => {
@@ -150,6 +230,15 @@ export default function App() {
           </div>
 
           <div className="hidden sm:flex items-center gap-3">
+            <button
+              type="button"
+              id="share-scratch-card-btn"
+              onClick={handleCreateShareLink}
+              className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 shadow-xs transition-all hover:border-neutral-300 hover:text-neutral-950"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </button>
             <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 border border-slate-200">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
               Active Workspace
@@ -207,8 +296,11 @@ export default function App() {
                   scratchAreaShape={scratchAreaShape}
                   customScratchPath={customScratchPath}
                   onCustomScratchPathChange={setCustomScratchPath}
+                  shortsPlacement={shortsPlacement}
+                  onShortsPlacementChange={setShortsPlacement}
                   isDrawingScratchArea={isDrawingScratchArea}
                   onDrawingScratchAreaChange={setIsDrawingScratchArea}
+                  isPlacingShorts={isPlacingShorts}
                   maskConfig={maskConfig}
                   onPercentageChange={setPercentageRevealed}
                   isFullyRevealed={isFullyRevealed}
@@ -287,6 +379,22 @@ export default function App() {
                   <span className="font-semibold text-slate-900">How to scratch:</span> Use your computer cursor or simply drag your finger on a mobile touchscreen to shave off the metallic foil and reveal the secret underneath!
                 </p>
               </div>
+              <div className="mt-3 flex flex-col gap-2 sm:hidden">
+                <button
+                  type="button"
+                  id="share-scratch-card-mobile-btn"
+                  onClick={handleCreateShareLink}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-xs font-semibold text-neutral-700 shadow-xs transition-all hover:border-neutral-300 hover:text-neutral-950"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  Share Scratch Link
+                </button>
+              </div>
+              {shareStatus && (
+                <p className="mt-3 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[11px] font-medium text-neutral-600">
+                  {shareStatus}
+                </p>
+              )}
 
             </div>
 
@@ -391,6 +499,8 @@ export default function App() {
                     onCustomScratchPathChange={setCustomScratchPath}
                     isDrawingScratchArea={isDrawingScratchArea}
                     onDrawingScratchAreaChange={setIsDrawingScratchArea}
+                    isPlacingShorts={isPlacingShorts}
+                    onPlacingShortsChange={setIsPlacingShorts}
                   />
                 )}
 
